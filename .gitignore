@@ -1,1 +1,4 @@
 chromedriver
+venv
+.idea
+__pycache__/

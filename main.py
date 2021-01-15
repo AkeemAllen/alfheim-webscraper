@@ -1,6 +1,9 @@
 from bs4 import BeautifulSoup
 import requests
 import re
+from Apartment import Apartment
+import json
+import spacy
 
 # real estate should delete itself based on expiry date
 #
@@ -8,9 +11,9 @@ import re
 # 	some form of index to check what exists in database
 #
 # check if there are more than 1 pages of ads and pull from those others
-from Apartment import Apartment
+#
+# consider using algolia search
 
-PATH = "./chromedriver"
 url = 'http://gleanerclassifieds.com/showads/ad/search/section_id/10100/menu_id//category_id/12518/keyword//title' \
       '//start_rec/0/page_size/50/sort/3'
 
@@ -20,7 +23,9 @@ ads = soup.find_all('td')
 
 rental_ads = []
 count = 0
+location_detected_count = 0
 extracted_data = []
+# nlp = spacy.load('en_core_web_sm')
 
 
 def extract_phone_number(text):
@@ -33,6 +38,25 @@ def extract_phone_number(text):
 def extract_price(text):
     price = re.findall(r'\$ ?[ ,.]?[0-9,]{1,}[kK]?', text)
     return price
+
+
+def extract_location(text):
+    # using cliff recognition
+    cliff_url = requests.get(f'http://localhost:8080/cliff-2.6.1/parse/text?q={text}')
+    json_object = cliff_url.json()
+
+    with open("./Regions.json") as f:
+        regions = json.load(f)
+
+    if json_object["status"] != "error":
+        if json_object['results']['places']['mentions']:
+            return json_object['results']['places']['mentions'][0]['source']['string']
+        else:
+            for region in regions["regions"]:
+                if region.upper() in text.upper():
+                    return region
+
+    return []
 
 
 for ad in ads:
@@ -49,19 +73,34 @@ for ad in ads:
                     ad_page = requests.get(links[1]).text
                 ad_page_html = BeautifulSoup(ad_page, 'lxml')
                 ad_page_html_rental_paragraph = ad_page_html.find_all('p')
+
                 for rental_paragraph in ad_page_html_rental_paragraph:
                     paragraph = rental_paragraph.find_all("font")
-                    for font in paragraph:
-                        if font.text != "" and not re.findall(r'Moving', font.text) \
-                                and not re.findall(r'BOX', font.text) and not re.findall(r'Removal', font.text):
-                            print(font.text)
-                            # pull out data
-                            found_phone_number = extract_phone_number(font.text)
-                            found_price = extract_price(font.text)
-                            data = Apartment(found_phone_number, found_price, font.text)
-                            extracted_data.append(data)
-                            print("Price", data.price)
-                            print("\n")
+                    if paragraph:
+                        # print(f"Full Paragraph: {paragraph}")
 
-for item in extracted_data:
-    print(str(item))
+                        if len(paragraph) <= 2:
+                            index = 0
+                            if not paragraph[0].text:
+                                index = 1
+
+                            if "img" not in str(paragraph[0]):
+                                if paragraph[index].text and not re.findall(r'([Mm]oving|[Bb]ox|[Rr]emoval|[mM]ove)',
+                                                                            paragraph[index].text):
+                                    # pull out data
+                                    found_phone_number = extract_phone_number(paragraph[index].text)
+                                    found_price = extract_price(paragraph[index].text)
+                                    found_location = extract_location(paragraph[index].text)
+                                    if found_location:
+                                        print(f"Found Location: {found_location}\n")
+                                        location_detected_count = location_detected_count + 1
+                                    else:
+                                        print(f"Full Ad: {paragraph[index].text}\n")
+                                    data = Apartment(found_phone_number, found_price, paragraph[index].text)
+                                    extracted_data.append(data)
+                                    count = count + 1
+                                    # print("Price", data.price)
+                                    # print("\n")
+
+print(f'Number of real estate option found: {count}')
+print(f"Number of location detected from text: {location_detected_count}")
