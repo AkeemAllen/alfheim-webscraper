@@ -25,7 +25,6 @@ rental_ads = []
 count = 0
 location_detected_count = 0
 extracted_data = []
-# nlp = spacy.load('en_core_web_sm')
 
 
 def extract_phone_number(text):
@@ -50,11 +49,15 @@ def extract_location(text):
 
     if json_object["status"] != "error":
         if json_object['results']['places']['mentions']:
-            return json_object['results']['places']['mentions'][0]['source']['string']
+            return json_object['results']['places']['mentions'][0]['source']['string'].upper()
         else:
-            for region in regions["regions"]:
+            for region in regions["districts"]:
                 if region.upper() in text.upper():
-                    return region
+                    return region.upper()
+                else:
+                    for kingston in regions["kingstons"]:
+                        if kingston.upper() in text.upper():
+                            return kingston.upper()
 
     return []
 
@@ -64,7 +67,6 @@ for ad in ads:
     if new_ad is not None:
         if new_ad.text != "" and "Clear Search" not in new_ad.text:
             if "Banker" not in str(new_ad) and "Accomodation" not in str(new_ad):
-                count = count + 1
                 rental_ads.append(new_ad)
                 links = re.findall(r'"(.*?)"', str(new_ad))
                 if "thickbox" not in links[0]:
@@ -85,8 +87,9 @@ for ad in ads:
                                 index = 1
 
                             if "img" not in str(paragraph[0]):
-                                if paragraph[index].text and not re.findall(r'([Mm]oving|[Bb]ox|[Rr]emoval|[mM]ove)',
-                                                                            paragraph[index].text):
+                                if paragraph[index].text and not \
+                                        re.findall(r'([Mm][oO][vV][iI][nN][gG]|[Bb][oO][xX]|[Rr][eE][mM]'
+                                                   r'[oO][vV][aA][lL]|[mM][oO][Vv][eE])', paragraph[index].text):
                                     # pull out data
                                     found_phone_number = extract_phone_number(paragraph[index].text)
                                     found_price = extract_price(paragraph[index].text)
