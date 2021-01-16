@@ -12,18 +12,28 @@ import spacy
 #
 # consider using algolia search
 
-url = 'http://gleanerclassifieds.com/showads/ad/search/section_id/10100/menu_id//category_id/12518/keyword//title' \
-      '//start_rec/0/page_size/50/sort/3'
 
-html_text = requests.get(url).text
-soup = BeautifulSoup(html_text, 'lxml')
-ads = soup.find_all('td')
+def main():
+    url = 'http://gleanerclassifieds.com/showads/ad/search/section_id/10100/menu_id//category_id/12518/keyword//title' \
+          '//start_rec/0/page_size/50/sort/3'
 
-extracted_data = []
+    html_text = requests.get(url).text
+    soup = BeautifulSoup(html_text, 'lxml')
+    ads = soup.find_all('td')
+    extracted_data = []
+    full_set_of_ads = get_more_ads(soup, ads)
+
+    for advertisement in full_set_of_ads:
+        advertisement_content = advertisement.find('a')
+        if advertisement_content is not None:
+            if advertisement_content.text != "" and "Clear Search" not in advertisement_content.text:
+                extracted_data.append(extract_relevant_data(advertisement_content))
+
+    print(len(extracted_data))
 
 
-def get_more_ads():
-    more_ads = soup.find(id="page")
+def get_more_ads(first_soup, set_of_ads):
+    more_ads = first_soup.find(id="page")
     navigations = more_ads.find_all("a", {"class": "pagingnav"})
 
     for nav in navigations:
@@ -32,10 +42,9 @@ def get_more_ads():
         new_page_soup = BeautifulSoup(new_page_html_text, 'lxml')
         new_page_ads = new_page_soup.find_all('td')
         for advertisement in new_page_ads:
-            ads.append(advertisement)
+            set_of_ads.append(advertisement)
 
-
-get_more_ads()
+    return set_of_ads
 
 
 def extract_phone_number(text):
@@ -74,41 +83,37 @@ def extract_location(text):
     return []
 
 
-def extract_relevant_data():
-    for ad in ads:
-        new_ad = ad.find('a')
-        if new_ad is not None:
-            if new_ad.text != "" and "Clear Search" not in new_ad.text:
-                if "Banker" not in str(new_ad) and "Accomodation" not in str(new_ad):
-                    links = re.findall(r'"(.*?)"', str(new_ad))
-                    if "thickbox" not in links[0]:
-                        ad_page = requests.get(links[0]).text
-                    else:
-                        ad_page = requests.get(links[1]).text
-                    ad_page_html = BeautifulSoup(ad_page, 'lxml')
-                    ad_page_html_rental_paragraph = ad_page_html.find_all('p')
+def extract_relevant_data(advertisement_content):
+    relevant_data = []
+    if "Banker" not in str(advertisement_content) and "Accomodation" not in str(advertisement_content):
+        links = re.findall(r'"(.*?)"', str(advertisement_content))
+        if "thickbox" not in links[0]:
+            ad_page = requests.get(links[0]).text
+        else:
+            ad_page = requests.get(links[1]).text
+        ad_page_html = BeautifulSoup(ad_page, 'lxml')
+        ad_page_html_rental_paragraph = ad_page_html.find_all('p')
 
-                    for rental_paragraph in ad_page_html_rental_paragraph:
-                        paragraph = rental_paragraph.find_all("font")
-                        if paragraph:
-                            if len(paragraph) <= 2:
-                                index = 0
-                                if not paragraph[0].text:
-                                    index = 1
-                                if "img" not in str(paragraph[0]):
-                                    if paragraph[index].text and not \
-                                            re.findall(r'([Mm][oO][vV][iI][nN][gG]|[Bb][oO][xX]|[Rr][eE][mM]'
-                                                       r'[oO][vV][aA][lL]|[mM][oO][Vv][eE])', paragraph[index].text):
-
-                                        # pulling out data
-                                        found_phone_number = extract_phone_number(paragraph[index].text)
-                                        found_price = extract_price(paragraph[index].text)
-                                        found_location = extract_location(paragraph[index].text)
-                                        print(found_location)
-                                        data = Apartment(found_phone_number, found_price,
-                                                         found_location, paragraph[index].text)
-                                        extracted_data.append(data)
-    return extracted_data
+        for rental_paragraph in ad_page_html_rental_paragraph:
+            paragraph = rental_paragraph.find_all("font")
+            if paragraph:
+                if len(paragraph) <= 2:
+                    index = 0
+                    if not paragraph[0].text:
+                        index = 1
+                    if "img" not in str(paragraph[0]):
+                        if paragraph[index].text and not \
+                                re.findall(r'([Mm][oO][vV][iI][nN][gG]|[Bb][oO][xX]|[Rr][eE][mM]'
+                                           r'[oO][vV][aA][lL]|[mM][oO][Vv][eE])', paragraph[index].text):
+                            found_phone_number = extract_phone_number(paragraph[index].text)
+                            found_price = extract_price(paragraph[index].text)
+                            found_location = extract_location(paragraph[index].text)
+                            print(found_location)
+                            data = Apartment(found_phone_number, found_price,
+                                             found_location, paragraph[index].text)
+                            relevant_data.append(data)
+    return relevant_data
 
 
-print(len(extract_relevant_data()))
+if __name__ == "__main__":
+    main()
