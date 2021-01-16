@@ -10,8 +10,6 @@ import spacy
 # update databases every day: if nothing new do nothing else add new entry(s)
 # 	some form of index to check what exists in database
 #
-# check if there are more than 1 pages of ads and pull from those others
-#
 # consider using algolia search
 
 url = 'http://gleanerclassifieds.com/showads/ad/search/section_id/10100/menu_id//category_id/12518/keyword//title' \
@@ -21,10 +19,23 @@ html_text = requests.get(url).text
 soup = BeautifulSoup(html_text, 'lxml')
 ads = soup.find_all('td')
 
-rental_ads = []
-count = 0
-location_detected_count = 0
 extracted_data = []
+
+
+def get_more_ads():
+    more_ads = soup.find(id="page")
+    navigations = more_ads.find_all("a", {"class": "pagingnav"})
+
+    for nav in navigations:
+        link = re.findall(r'http:\/\/[aA0-zZ9.\/]{1,}3', str(nav))
+        new_page_html_text = requests.get(link[0]).text
+        new_page_soup = BeautifulSoup(new_page_html_text, 'lxml')
+        new_page_ads = new_page_soup.find_all('td')
+        for advertisement in new_page_ads:
+            ads.append(advertisement)
+
+
+get_more_ads()
 
 
 def extract_phone_number(text):
@@ -51,6 +62,7 @@ def extract_location(text):
         if json_object['results']['places']['mentions']:
             return json_object['results']['places']['mentions'][0]['source']['string'].upper()
         else:
+            # Pulling out from own regions file
             for region in regions["districts"]:
                 if region.upper() in text.upper():
                     return region.upper()
@@ -62,48 +74,41 @@ def extract_location(text):
     return []
 
 
-for ad in ads:
-    new_ad = ad.find('a')
-    if new_ad is not None:
-        if new_ad.text != "" and "Clear Search" not in new_ad.text:
-            if "Banker" not in str(new_ad) and "Accomodation" not in str(new_ad):
-                rental_ads.append(new_ad)
-                links = re.findall(r'"(.*?)"', str(new_ad))
-                if "thickbox" not in links[0]:
-                    ad_page = requests.get(links[0]).text
-                else:
-                    ad_page = requests.get(links[1]).text
-                ad_page_html = BeautifulSoup(ad_page, 'lxml')
-                ad_page_html_rental_paragraph = ad_page_html.find_all('p')
+def extract_relevant_data():
+    for ad in ads:
+        new_ad = ad.find('a')
+        if new_ad is not None:
+            if new_ad.text != "" and "Clear Search" not in new_ad.text:
+                if "Banker" not in str(new_ad) and "Accomodation" not in str(new_ad):
+                    links = re.findall(r'"(.*?)"', str(new_ad))
+                    if "thickbox" not in links[0]:
+                        ad_page = requests.get(links[0]).text
+                    else:
+                        ad_page = requests.get(links[1]).text
+                    ad_page_html = BeautifulSoup(ad_page, 'lxml')
+                    ad_page_html_rental_paragraph = ad_page_html.find_all('p')
 
-                for rental_paragraph in ad_page_html_rental_paragraph:
-                    paragraph = rental_paragraph.find_all("font")
-                    if paragraph:
-                        # print(f"Full Paragraph: {paragraph}")
+                    for rental_paragraph in ad_page_html_rental_paragraph:
+                        paragraph = rental_paragraph.find_all("font")
+                        if paragraph:
+                            if len(paragraph) <= 2:
+                                index = 0
+                                if not paragraph[0].text:
+                                    index = 1
+                                if "img" not in str(paragraph[0]):
+                                    if paragraph[index].text and not \
+                                            re.findall(r'([Mm][oO][vV][iI][nN][gG]|[Bb][oO][xX]|[Rr][eE][mM]'
+                                                       r'[oO][vV][aA][lL]|[mM][oO][Vv][eE])', paragraph[index].text):
 
-                        if len(paragraph) <= 2:
-                            index = 0
-                            if not paragraph[0].text:
-                                index = 1
+                                        # pulling out data
+                                        found_phone_number = extract_phone_number(paragraph[index].text)
+                                        found_price = extract_price(paragraph[index].text)
+                                        found_location = extract_location(paragraph[index].text)
+                                        print(found_location)
+                                        data = Apartment(found_phone_number, found_price,
+                                                         found_location, paragraph[index].text)
+                                        extracted_data.append(data)
+    return extracted_data
 
-                            if "img" not in str(paragraph[0]):
-                                if paragraph[index].text and not \
-                                        re.findall(r'([Mm][oO][vV][iI][nN][gG]|[Bb][oO][xX]|[Rr][eE][mM]'
-                                                   r'[oO][vV][aA][lL]|[mM][oO][Vv][eE])', paragraph[index].text):
-                                    # pull out data
-                                    found_phone_number = extract_phone_number(paragraph[index].text)
-                                    found_price = extract_price(paragraph[index].text)
-                                    found_location = extract_location(paragraph[index].text)
-                                    if found_location:
-                                        print(f"Found Location: {found_location}\n")
-                                        location_detected_count = location_detected_count + 1
-                                    else:
-                                        print(f"Full Ad: {paragraph[index].text}\n")
-                                    data = Apartment(found_phone_number, found_price, paragraph[index].text)
-                                    extracted_data.append(data)
-                                    count = count + 1
-                                    # print("Price", data.price)
-                                    # print("\n")
 
-print(f'Number of real estate option found: {count}')
-print(f"Number of location detected from text: {location_detected_count}")
+print(len(extract_relevant_data()))
