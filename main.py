@@ -2,15 +2,17 @@ from bs4 import BeautifulSoup
 import requests
 import re
 from python_graphql_client import GraphqlClient
-from Apartment import Apartment
 import json
-
+import sys
 
 # update databases every day: if nothing new do nothing else add new entry(s)
 # 	some form of index to check what exists in database
 #
 # implement pagination in frontend
 # consider using algolia search
+
+# client = GraphqlClient("http://localhost:8081/graphql")
+client = GraphqlClient("https://project-alfheim.herokuapp.com/graphql/")
 
 
 def main():
@@ -24,14 +26,25 @@ def main():
     full_set_of_ads = get_more_ads(soup, ads)
 
     print("Processing Advertisements...")
-    for advertisement in full_set_of_ads[:150]:
+    for advertisement in full_set_of_ads:
         advertisement_content = advertisement.find('a')
         if advertisement_content is not None:
             if advertisement_content.text != "" and "Clear Search" not in advertisement_content.text:
-                data = extract_relevant_data(advertisement_content)
-                if data:
-                    extracted_data.append(data[0])
-                    # make_query(data[0])
+                try:
+                    data = extract_relevant_data(advertisement_content)
+                    if data:
+                        extracted_data.append(data[0])
+                        # before query is made, potentially match what's being sent with what already exists in the
+                        # database. Only add ads that don't exist already
+                        # run this script once everyday
+                        if not room_exists_already(data[0].desc):
+                            print("Doesn't exist in database")
+                            make_query(data[0])
+                        else:
+                            print("Already exists in databse")
+                except:
+                    print("Unexpected Error: ", sys.exc_info()[0])
+                    raise
 
     print("Completed Processing Advertisements")
 
@@ -56,13 +69,20 @@ def extract_phone_number(text):
     if not phone_number:
         phone_number = re.findall(r'([0-9]{3})([ .-]?)([0-9]{4,})', text)
 
-    if phone_number[0][0] == "876":
-        if len(phone_number[0]) < 4:
-            contact = f'{phone_number[0][0]}-{phone_number[0][2]}'
+    try:
+        print(phone_number)
+        if phone_number:
+            if phone_number[0][0] == "876":
+                if len(phone_number[0]) < 4:
+                    contact = f'{phone_number[0][0]}-{phone_number[0][2]}'
+                else:
+                    contact = f'{phone_number[0][0]}-{phone_number[0][2]}-{phone_number[0][3]}'
+            else:
+                contact = f'876-{phone_number[0][0]}-{phone_number[0][2]}'
         else:
-            contact = f'{phone_number[0][0]}-{phone_number[0][2]}-{phone_number[0][3]}'
-    else:
-        contact = f'876-{phone_number[0][0]}-{phone_number[0][2]}'
+            contact = "Unspecified"
+    except IndexError:
+        raise
 
     return contact
 
@@ -70,31 +90,30 @@ def extract_phone_number(text):
 def extract_price(text):
     price = re.findall(r'\$ ?[ ,.]?[0-9,]{1,}[kK]?', text)
 
+    if price:
+        price[0] = price[0][1:]
+
     if not price:
         price = re.findall(r'\$?[,.]?[0-9,]{1,}[kK]', text)
 
-        if price:
-            price[0] = '$' + price[0]
-
     if not price:
-        return 'unspecified'
+        return '0'
 
     try:
         if price[0][len(price[0]) - 1] == 'k' or price[0][len(price[0]) - 1] == 'K':
-            price[0] = price[0][:-1] + ',000'
-        elif price[0][len(price[0]) - 4] != ",":
-            price[0] = price[0][:len(price[0]) - 3] + ',' + price[0][len(price[0]) - 3:]
+            price[0] = price[0][:-1] + '000'
+        elif price[0][len(price[0]) - 4] == ",":
+            # price[0] = price[0][:len(price[0]) - 3] + ',' + price[0][len(price[0]) - 3:]
+            price[0] = re.sub(",", "", price[0])
     except IndexError:
         print(price)
-
-    print(price)
 
     return price[0]
 
 
 def extract_location(text):
     # using cliff recognition
-    cliff_url = requests.get(f'http://localhost:8080/cliff-2.6.1/parse/text?q={text}')
+    cliff_url = requests.get(f'http://localhost:8085/cliff-2.6.1/parse/text?q={text}')
     json_object = cliff_url.json()
 
     with open("./Regions.json") as f:
@@ -102,15 +121,19 @@ def extract_location(text):
 
     if json_object["status"] != "error":
         if json_object['results']['places']['mentions']:
-            return json_object['results']['places']['mentions'][0]['source']['string'].capitalize()
+            if json_object['results']['places']['mentions'][0]['countryCode'] == "JM":
+                return json_object['results']['places']['mentions'][0]['source']['string'].capitalize()
         else:
             # Pulling out from own regions file
             for region in regions["districts"]:
                 if region.upper() in text.upper():
                     return region.capitalize()
                 else:
+                    # refine this block: Kgn 19 got read as Kingston 1
                     for kingston in regions["kingstons"]:
                         if kingston.upper() in text.upper():
+                            if kingston.upper()[:3] == "KGN":
+                                kingston = re.sub("KGN", "Kingston", kingston.upper())
                             return kingston.capitalize()
 
     return "Unspecified"
@@ -156,9 +179,30 @@ def extract_relevant_data(advertisement_content):
     return relevant_data
 
 
-def make_query(data):
-    client = GraphqlClient("http://localhost:8081/graphql")
+def room_exists_already(description):
+    query = '''
+            query checkRoom($description: String!){
+                getRoomByDescription(description: $description){
+                    id
+                }
+            }
+        '''
 
+    variables = {
+        "description": description
+    }
+
+    result = client.execute(query=query, variables=variables)
+
+    print(result)
+
+    if "errors" in result:
+        return False
+
+    return True
+
+
+def make_query(data):
     query = '''
         mutation createRoom($location: String, $price: String, $contact: String
                                 $description: String, $uuid: String, $expirationDate: String){
@@ -194,6 +238,15 @@ def make_query(data):
 
     result = client.execute(query=query, variables=variables)
     print(result)
+
+
+class Apartment:
+    def __init__(self, phone_number, price, location, desc, expiry_date):
+        self.phone_number = phone_number
+        self.price = price
+        self.desc = desc
+        self.location = location
+        self.expiry_date = expiry_date
 
 
 if __name__ == "__main__":
